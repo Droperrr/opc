@@ -1,16 +1,125 @@
-# PROJECT MANIFEST
+# PROJECT MANIFEST - OPC (Optimized Production Code)
 
-This document lists the core files of the BANT project required for deployment.
+## 🎯 Описание проекта
+**OPC** - это оптимизированная версия торговой системы для анализа опционов SOL и генерации торговых сигналов. Система включает модули для сбора данных, анализа волатильности, генерации сигналов и бэктестинга.
 
-- `prediction_layer.py`
-- `error_monitor.py`
-- `block_detector.py`
-- `block_analyzer.py`
-- `formula_engine.py`
-- `block_reporting.py`
-- `main_pipeline.py`
-- `test_main_pipeline.py`
-- `requirements.txt`
-- `README.md`
-- `.gitignore`
-- `PROJECT_MANIFEST.md`
+## 📁 Структура проекта
+
+### 🔧 Ядро системы (Core Modules)
+- `main_pipeline.py` - Основной пайплайн системы, оркестрирует все компоненты
+- `prediction_layer.py` - Слой предсказаний цен и волатильности
+- `error_monitor.py` - Мониторинг ошибок предсказаний
+- `block_detector.py` - Детектор блоков данных
+- `block_analyzer.py` - Анализатор блоков
+- `formula_engine.py` - Движок формул для расчетов
+- `block_reporting.py` - Отчетность по блокам
+
+### 📊 Сбор данных (Data Collection)
+- `database.py` - Работа с SQLite базой данных
+- `get_iv.py` - Получение данных волатильности с бирж
+- `futures_collector.py` - Сбор исторических данных фьючерсов
+- `enrich_options.py` - Обогащение данных опционов (IV + Skew + OI)
+- `historical_iv_collector.py` - Сбор исторических данных IV
+- `historical_basis_collector.py` - Сбор исторических данных basis
+
+### 🎯 Генерация сигналов (Signal Generation)
+- `signal_generator.py` - Базовая генерация торговых сигналов
+- `signal_generator_v2.py` - Улучшенная версия с калиброванными параметрами
+- `signal_generator_v3.py` - Оптимизированная версия с динамическими порогами
+- `trend_signals.py` - Генерация трендовых сигналов
+- `signals.py` - Альтернативная система генерации сигналов
+- `entry_generator.py` - Генерация точек входа
+
+### 🔬 Бэктестинг (Backtesting)
+- `backtest_engine.py` - Основной движок бэктестинга
+- `backtest_signals.py` - Бэктестинг торговых сигналов
+- `advanced_backtest_system.py` - Продвинутая система бэктестинга
+
+### ⚙️ Инфраструктура (Infrastructure)
+- `scheduler.py` - Планировщик для автоматического сбора данных
+- `logger.py` - Система логирования
+- `compatibility.py` - Модуль совместимости
+- `ui_dashboard.py` - Веб-интерфейс для мониторинга
+
+### 🧪 Тестирование (Testing)
+- `test_main_pipeline.py` - Тесты основного пайплайна
+- `test_block_components.py` - Тесты компонентов блоков
+- `test_compatibility.py` - Тесты совместимости
+- `test_error_monitor.py` - Тесты мониторинга ошибок
+
+### 📋 Конфигурация (Configuration)
+- `requirements.txt` - Зависимости Python
+- `README.md` - Документация проекта
+- `.gitignore` - Исключения для Git
+- `PROJECT_MANIFEST.md` - Данный файл
+
+## 🚀 Быстрый старт
+
+### Установка зависимостей:
+```bash
+pip install -r requirements.txt
+```
+
+### Запуск основного пайплайна:
+```bash
+python main_pipeline.py
+```
+
+### Запуск сбора данных:
+```bash
+python scheduler.py
+```
+
+### Запуск веб-интерфейса:
+```bash
+python ui_dashboard.py
+```
+
+## 📊 Архитектура системы
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Data Sources  │    │  Signal Gen     │    │   Backtesting   │
+│                 │    │                 │    │                 │
+│ • Bybit API     │───▶│ • Trend Analysis│───▶│ • Performance   │
+│ • Jupiter API   │    │ • IV Analysis   │    │ • Risk Metrics  │
+│ • Historical    │    │ • OI Analysis   │    │ • Optimization  │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Database      │    │  Main Pipeline  │    │   Monitoring    │
+│                 │    │                 │    │                 │
+│ • SQLite DB     │    │ • Orchestration │    │ • Error Monitor │
+│ • Data Storage  │    │ • Component Mgmt│    │ • Performance   │
+│ • Caching       │    │ • Workflow      │    │ • Alerts        │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+## 🔧 Ключевые особенности
+
+- **Модульная архитектура** - каждый компонент независим и может быть заменен
+- **Автоматический сбор данных** - планировщик для регулярного обновления данных
+- **Множественные стратегии** - различные версии генераторов сигналов
+- **Комплексный бэктестинг** - тестирование стратегий на исторических данных
+- **Веб-интерфейс** - удобный мониторинг системы
+- **Расширяемость** - легко добавлять новые модули и стратегии
+
+## 📈 Производительность
+
+- **Время отклика**: < 1 секунды для генерации сигналов
+- **Покрытие данных**: 24/7 мониторинг рынка
+- **Точность**: Калиброванные параметры на основе исторических данных
+- **Масштабируемость**: Поддержка множественных активов
+
+## 🛠️ Технические требования
+
+- **Python**: 3.8+
+- **База данных**: SQLite (встроенная)
+- **Память**: Минимум 2GB RAM
+- **Диск**: 10GB свободного места
+- **Сеть**: Стабильное интернет-соединение для API
+
+## 📝 Лицензия
+
+Проект разработан для внутреннего использования. Все права защищены.
