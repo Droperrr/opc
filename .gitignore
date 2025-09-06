@@ -1,0 +1,22 @@
+# Python virtual environment
+venv/
+.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# IDE configuration folders
+.idea/
+.vscode/
+
+# Local data, logs, reports, and backups
+report_*/
+*.log
+*.db
+*.csv
+*.sql
+*.dump
+
+# OS-specific files
+.DS_Store
