@@ -1,121 +1,51 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Virtual Environment
-venv/
-env/
-ENV/
-env.bak/
-venv.bak/
-
-# IDE
-.vscode/
+# --- Системные и IDE файлы ---
+.DS_Store
+Thumbs.db
 .idea/
+.vscode/
 *.swp
 *.swo
 *~
 
-# Logs
-*.log
-logs/
-log/
+# --- Python ---
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+env/
+.env/
 
-# Database files
-*.db
-*.sqlite
-*.sqlite3
+# --- Данные и Базы Данных ---
 data/
-backups/
-
-# CSV and data files
+*.db
+*.sqlite3
 *.csv
+*.sql
+*.zip
 *.json
-*.txt
 *.html
-*.md
 
-# Reports and experiments
-report_*/
-experiment_*/
-data/experiments/
-data/experiment_sets/
-data/backtests/
-data/cache/
-
-# SSH keys
-key_*
-*.pem
-*.key
-
-# Environment variables
+# --- Ключи и Секреты (КРИТИЧЕСКИ ВАЖНО) ---
+key_yandex
+*.pub
 .env
-.env.local
-.env.*.local
 
-# Temporary files
-*.tmp
-*.temp
-temp/
-tmp/
+# --- Логи, Отчеты и Результаты ---
+*.log
+*report*
+*REPORT*
+*summary.txt
+project_structure.txt
+s[0-9][0-9]_*
+task*
+*_OPTIMIZED.md
+*_INSTRUCTIONS.md
+*_MANIFEST_*.md
+run_s10_*.py
+system_full_test.py
+expectation_vs_reality_demo.html
+bant_backup.sql
 
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Test files
-test_*.py
-*_test.py
-*_demo.py
-*_example.py
-
-# Backup files
+# --- Резервные копии и временные файлы ---
 *.bak
 *.backup
-*_backup.*
-
-# Configuration files with sensitive data
-config/
-*.conf
-*.config
-
-# Jupyter Notebooks
-.ipynb_checkpoints/
-
-# Coverage reports
-htmlcov/
-.coverage
-.coverage.*
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
