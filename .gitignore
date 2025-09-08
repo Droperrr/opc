@@ -29,6 +29,7 @@ data/
 key_yandex
 *.pub
 .env
+yes
 
 # --- Логи, Отчеты и Результаты ---
 *.log
