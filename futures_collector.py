@@ -4,6 +4,8 @@
 Поддерживает все таймфреймы: 1m, 5m, 15m, 1h, 4h, 1d
 """
 
+from config import DATABASE_PATH
+
 import requests
 import sqlite3
 import pandas as pd
@@ -26,7 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class DataCollector:
-    def __init__(self, db_path: str = 'data/sol_iv.db'):
+    def __init__(self, db_path: str = DATABASE_PATH):
         self.db_path = db_path
         self.base_url = 'https://api.bybit.com'
         self.session = requests.Session()
@@ -286,7 +288,7 @@ def main():
                        help='Дата начала в формате YYYY-MM-DD')
     parser.add_argument('--end', required=True,
                        help='Дата окончания в формате YYYY-MM-DD')
-    parser.add_argument('--db', default='data/sol_iv.db',
+    parser.add_argument('--db', default=DATABASE_PATH,
                        help='Путь к базе данных')
     
     args = parser.parse_args()

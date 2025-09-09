@@ -27,7 +27,7 @@ class IVDatabase:
     def ensure_data_directory(self):
         """Создает директорию data если её нет"""
         data_dir = os.path.dirname(self.db_path)
-        if not os.path.exists(data_dir):
+        if data_dir and not os.path.exists(data_dir):
             os.makedirs(data_dir)
             logger.info(f"📁 Создана директория: {data_dir}")
     

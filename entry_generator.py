@@ -10,98 +10,148 @@ from logger import get_logger
 
 logger = get_logger()
 
-def gen_entries(db='data/options_enriched.db', iv_table='iv_agg_1m', trend_table='trend_signals', out_csv='entry_points.csv'):
+def gen_entries(db='server_opc.db', iv_table='iv_agg', trend_table='signals', iv_timeframe='1m', signal_timeframe='15m', out_csv='entry_points.csv'):
     """Генерирует минутные точки входа, согласованные с трендом"""
-    logger.info("🚀 Генерация минутных точек входа")
+    logger.info(f"🚀 Генерация точек входа для IV таймфрейма {iv_timeframe} и сигнала таймфрейма {signal_timeframe}")
     
     try:
         conn = sqlite3.connect(db)
         
-        # Загружаем минутные агрегаты
-        iv1 = pd.read_sql_query(f"SELECT * FROM {iv_table} ORDER BY timestamp ASC", conn, parse_dates=['timestamp'])
+        # Загружаем агрегаты с фильтрацией по таймфрейму
+        iv1 = pd.read_sql_query(f"SELECT * FROM {iv_table} WHERE timeframe = '{iv_timeframe}' ORDER BY time ASC", conn, parse_dates=['time'])
         if iv1.empty:
-            logger.warning(f"⚠️ Нет данных в таблице {iv_table}")
+            logger.warning(f"⚠️ Нет данных в таблице {iv_table} для таймфрейма {iv_timeframe}")
             return None
         
-        # Загружаем трендовые сигналы
-        trend = pd.read_sql_query(f"SELECT * FROM {trend_table}", conn, parse_dates=['timestamp'])
+        # Переименовываем столбцы для совместимости
+        iv1 = iv1.rename(columns={'time': 'timestamp', 'iv_30d': 'iv_mean_all', 'skew_30d': 'skew', 'spot_price': 'underlying_price'})
+        
+        # Загружаем трендовые сигналы с фильтрацией по таймфрейму
+        trend = pd.read_sql_query(f"SELECT * FROM {trend_table} WHERE timeframe = '{signal_timeframe}'", conn, parse_dates=['time'])
         if trend.empty:
-            logger.warning(f"⚠️ Нет данных в таблице {trend_table}")
+            logger.warning(f"⚠️ Нет данных в таблице {trend_table} для таймфрейма {signal_timeframe}")
             return None
         
+        # Переименовываем столбцы для совместимости
+        trend = trend.rename(columns={'time': 'timestamp', 'signal': 'direction'})
         trend = trend.sort_values('timestamp')
-        logger.info(f"📊 Загружено {len(iv1)} минутных записей и {len(trend)} трендовых сигналов")
+        logger.info(f"📊 Загружено {len(iv1)} записей и {len(trend)} трендовых сигналов для таймфреймов IV:{iv_timeframe} сигнал:{signal_timeframe}")
         
         # Параметры для генерации точек входа
-        spike_threshold = 0.02  # 2% spike
+        spike_threshold = 0.01  # 1% spike
         min_trend_conf = 0.3   # Минимальная уверенность тренда
         
-        # Вычисляем IV spike для минутных данных
+        # Вычисляем IV spike для данных
         iv1['iv_prev5'] = iv1['iv_mean_all'].rolling(5, min_periods=1).mean().shift(1)
         iv1['spike_pct'] = (iv1['iv_mean_all'] - iv1['iv_prev5']) / iv1['iv_prev5'].replace(0, 1)
         
         entries = []
         
-        for _, r in iv1.iterrows():
-            if abs(r['spike_pct']) >= spike_threshold:
-                # Находим ближайший трендовый сигнал (15m или 1h)
-                current_time = r['timestamp']
-                
-                # Ищем трендовые сигналы за последние 30 минут
-                recent_trends = trend[trend['timestamp'] >= current_time - timedelta(minutes=30)]
-                
-                if recent_trends.empty:
-                    continue
-                
-                # Берем самый последний тренд
-                last_trend = recent_trends.iloc[-1]
-                
-                if last_trend['confidence'] < min_trend_conf:
-                    continue
-                
-                # Определяем направление входа на основе spike и тренда
-                entry_direction = None
-                entry_reason = ""
-                
-                # Если IV растет и тренд BUY/BULLISH
-                if (r['spike_pct'] > 0 and 
-                    last_trend['direction'] in ['BUY', 'BULLISH']):
-                    entry_direction = 'BUY'
-                    entry_reason = f"IV spike +{r['spike_pct']*100:.1f}% + {last_trend['direction']} trend"
-                
-                # Если IV падает и тренд SELL/BEARISH
-                elif (r['spike_pct'] < 0 and 
-                      last_trend['direction'] in ['SELL', 'BEARISH']):
-                    entry_direction = 'SELL'
-                    entry_reason = f"IV spike {r['spike_pct']*100:.1f}% + {last_trend['direction']} trend"
-                
-                # Дополнительные правила на основе skew
-                elif r['skew'] > 0.01 and last_trend['direction'] in ['BUY', 'BULLISH']:
-                    entry_direction = 'BUY'
-                    entry_reason = f"positive skew {r['skew']:.4f} + {last_trend['direction']} trend"
-                
-                elif r['skew'] < -0.01 and last_trend['direction'] in ['SELL', 'BEARISH']:
-                    entry_direction = 'SELL'
-                    entry_reason = f"negative skew {r['skew']:.4f} + {last_trend['direction']} trend"
-                
-                if entry_direction:
-                    # Рассчитываем confidence на основе spike и тренда
-                    spike_confidence = min(1.0, abs(r['spike_pct']) * 10)
-                    trend_confidence = last_trend['confidence']
-                    combined_confidence = (spike_confidence + trend_confidence) / 2
+        # Если нет трендовых сигналов, используем простую генерацию точек входа на основе IV spike и skew
+        if trend.empty:
+            logger.warning("⚠️ Нет трендовых сигналов, генерируем точки входа только на основе IV spike и skew")
+            for _, r in iv1.iterrows():
+                if abs(r['spike_pct']) >= spike_threshold:
+                    # Определяем направление входа на основе spike и skew
+                    entry_direction = None
+                    entry_reason = ""
                     
-                    entries.append({
-                        'timestamp': r['timestamp'].isoformat(),
-                        'direction': entry_direction,
-                        'timeframe': '1m',
-                        'confidence': round(combined_confidence, 2),
-                        'reason': entry_reason,
-                        'underlying_price': r['underlying_price'],
-                        'iv_spike': round(r['spike_pct'] * 100, 2),
-                        'skew': round(r['skew'], 4),
-                        'trend_direction': last_trend['direction'],
-                        'trend_confidence': last_trend['confidence']
-                    })
+                    # Если IV растет
+                    if r['spike_pct'] > 0:
+                        entry_direction = 'BUY'
+                        entry_reason = f"IV spike +{r['spike_pct']*100:.1f}%"
+                    
+                    # Если IV падает
+                    elif r['spike_pct'] < 0:
+                        entry_direction = 'SELL'
+                        entry_reason = f"IV spike {r['spike_pct']*100:.1f}%"
+                    
+                    # Дополнительные правила на основе skew
+                    elif r['skew'] > 0.01:
+                        entry_direction = 'BUY'
+                        entry_reason = f"positive skew {r['skew']:.4f}"
+                    
+                    elif r['skew'] < -0.01:
+                        entry_direction = 'SELL'
+                        entry_reason = f"negative skew {r['skew']:.4f}"
+                    
+                    if entry_direction:
+                        # Рассчитываем confidence на основе spike
+                        spike_confidence = min(1.0, abs(r['spike_pct']) * 10)
+                        
+                        entries.append({
+                            'timestamp': r['timestamp'].isoformat(),
+                            'direction': entry_direction,
+                            'timeframe': iv_timeframe,
+                            'confidence': round(spike_confidence, 2),
+                            'reason': entry_reason,
+                            'underlying_price': r['underlying_price'],
+                            'iv_spike': round(r['spike_pct'] * 100, 2),
+                            'skew': round(r['skew'], 4),
+                            'trend_direction': 'NONE',
+                            'trend_confidence': 0.0
+                        })
+        else:
+            for _, r in iv1.iterrows():
+                if abs(r['spike_pct']) >= spike_threshold:
+                    # Находим ближайший трендовый сигнал (15m или 1h)
+                    current_time = r['timestamp']
+                    
+                    # Ищем трендовые сигналы за последние 30 минут
+                    recent_trends = trend[trend['timestamp'] >= current_time - timedelta(minutes=30)]
+                    
+                    if recent_trends.empty:
+                        continue
+                    
+                    # Берем самый последний тренд
+                    last_trend = recent_trends.iloc[-1]
+                    
+                    if last_trend['confidence'] < min_trend_conf:
+                        continue
+                    
+                    # Определяем направление входа на основе spike и тренда
+                    entry_direction = None
+                    entry_reason = ""
+                    
+                    # Если IV растет и тренд BUY/BULLISH
+                    if (r['spike_pct'] > 0 and
+                        last_trend['direction'] in ['BUY', 'BULLISH']):
+                        entry_direction = 'BUY'
+                        entry_reason = f"IV spike +{r['spike_pct']*100:.1f}% + {last_trend['direction']} trend"
+                    
+                    # Если IV падает и тренд SELL/BEARISH
+                    elif (r['spike_pct'] < 0 and
+                          last_trend['direction'] in ['SELL', 'BEARISH']):
+                        entry_direction = 'SELL'
+                        entry_reason = f"IV spike {r['spike_pct']*100:.1f}% + {last_trend['direction']} trend"
+                    
+                    # Дополнительные правила на основе skew
+                    elif r['skew'] > 0.01 and last_trend['direction'] in ['BUY', 'BULLISH']:
+                        entry_direction = 'BUY'
+                        entry_reason = f"positive skew {r['skew']:.4f} + {last_trend['direction']} trend"
+                    
+                    elif r['skew'] < -0.01 and last_trend['direction'] in ['SELL', 'BEARISH']:
+                        entry_direction = 'SELL'
+                        entry_reason = f"negative skew {r['skew']:.4f} + {last_trend['direction']} trend"
+                    
+                    if entry_direction:
+                        # Рассчитываем confidence на основе spike и тренда
+                        spike_confidence = min(1.0, abs(r['spike_pct']) * 10)
+                        trend_confidence = last_trend['confidence']
+                        combined_confidence = (spike_confidence + trend_confidence) / 2
+                        
+                        entries.append({
+                            'timestamp': r['timestamp'].isoformat(),
+                            'direction': entry_direction,
+                            'timeframe': iv_timeframe,
+                            'confidence': round(combined_confidence, 2),
+                            'reason': entry_reason,
+                            'underlying_price': r['underlying_price'],
+                            'iv_spike': round(r['spike_pct'] * 100, 2),
+                            'skew': round(r['skew'], 4),
+                            'trend_direction': last_trend['direction'],
+                            'trend_confidence': last_trend['confidence']
+                        })
         
         if entries:
             # Сохраняем в CSV
@@ -132,16 +182,16 @@ def generate_entries_for_all_timeframes():
     all_entries = []
     
     # Генерируем точки входа на основе 1m агрегатов
-    entries_1m = gen_entries(iv_table='iv_agg_1m', trend_table='trend_signals_15m')
+    entries_1m = gen_entries(iv_timeframe='1m', signal_timeframe='15m')
     if entries_1m is not None:
         all_entries.append(entries_1m)
-        logger.info(f"✅ Сгенерировано {len(entries_1m)} точек входа для 1m")
+        logger.info(f"✅ Сгенерировано {len(entries_1m)} точек входа для комбинации 1m/15m")
     
     # Также можно добавить точки входа на основе 15m агрегатов
-    entries_15m = gen_entries(iv_table='iv_agg_15m', trend_table='trend_signals_1h')
+    entries_15m = gen_entries(iv_timeframe='15m', signal_timeframe='15m')
     if entries_15m is not None:
         all_entries.append(entries_15m)
-        logger.info(f"✅ Сгенерировано {len(entries_15m)} точек входа для 15m")
+        logger.info(f"✅ Сгенерировано {len(entries_15m)} точек входа для комбинации 15m/15m")
     
     # Объединяем все точки входа
     if all_entries:
@@ -217,3 +267,35 @@ def run_entry_generator_demo():
 if __name__ == "__main__":
     # Демонстрация генерации точек входа
     run_entry_generator_demo()
+    
+    # ЗАПУСК АГЕНТА-АНАЛИТИКА
+    print("\n--- ЗАПУСК АГЕНТА-АНАЛИТИКА ---")
+    try:
+        from reporting_agent import ReportingAgent
+        import pandas as pd
+        import os
+        
+        # Проверяем существование файла
+        if not os.path.exists('entry_points.csv'):
+            print("\n--- АГЕНТ-АНАЛИТИК: Файл entry_points.csv не найден. ---")
+        elif os.path.getsize('entry_points.csv') == 0:
+            print("\n--- АГЕНТ-АНАЛИТИК: Файл entry_points.csv пустой. ---")
+        else:
+            # Пытаемся загрузить сгенерированные точки входа
+            try:
+                entry_points_df = pd.read_csv('entry_points.csv')
+            except Exception as e:
+                entry_points_df = None
+                print(f"\n--- АГЕНТ-АНАЛИТИК: Ошибка чтения файла entry_points.csv: {e} ---")
+            
+            if entry_points_df is not None and not entry_points_df.empty:
+                agent = ReportingAgent()
+                # Анализируем каждый сгенерированный сигнал
+                for index, signal_row in entry_points_df.iterrows():
+                    signal_dict = signal_row.to_dict()
+                    report_text = agent.analyze_signal(signal_dict)
+                    print(report_text)
+            else:
+                print("\n--- АГЕНТ-АНАЛИТИК: Нет сигналов для анализа. ---")
+    except Exception as e:
+        print(f"\n--- АГЕНТ-АНАЛИТИК: Ошибка запуска агента: {e} ---")

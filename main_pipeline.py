@@ -16,6 +16,9 @@ from block_detector import BlockDetector
 from block_analyzer import BlockAnalyzer
 from formula_engine import FormulaEngine
 from block_reporting import BlockReporter
+from historical_analyzer import HistoricalAnalyzer
+from reporting_agent import NewsAnalyzer
+from basis_analyzer import BasisAnalyzer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,6 +38,11 @@ class MainPipeline:
         self.formula_engine = FormulaEngine()
         self.block_reporter = BlockReporter(db_path)
         
+        # Initialize analyzers
+        self.historical_analyzer = HistoricalAnalyzer(db_path)
+        self.news_analyzer = NewsAnalyzer()
+        self.basis_analyzer = BasisAnalyzer(db_path)
+        
         logger.info("🚀 Main Pipeline initialized with all components")
     
     def run_prediction_cycle(self, prices: List[float], 
@@ -43,7 +51,12 @@ class MainPipeline:
         """Run a complete prediction cycle"""
         try:
             # Get prediction
-            prediction, confidence = self.prediction_layer.predict_next_price(
+            prediction = self.prediction_layer.predict_next_price(
+                prices, method="simple_moving_average"
+            )
+            
+            # Calculate confidence separately
+            confidence = self.prediction_layer.calculate_prediction_confidence(
                 prices, method="simple_moving_average"
             )
             
@@ -82,10 +95,14 @@ class MainPipeline:
             end_time = datetime.now()
             start_time = end_time - timedelta(days=lookback_days)
             
-            blocks = self.block_detector.detect_block_boundaries(
+            # Получаем историю ошибок за указанный период
+            error_history = self.error_monitor.get_errors(
                 start_time=start_time,
                 end_time=end_time
             )
+            
+            # Передаем DataFrame с ошибками в block_detector
+            blocks = self.block_detector.detect_block_boundaries(error_history)
             
             logger.info(f"✅ Detected {len(blocks)} market blocks")
             return blocks
@@ -221,6 +238,53 @@ class MainPipeline:
             logger.error(f"❌ Error getting system status: {e}")
             return {'error': str(e), 'timestamp': datetime.now().isoformat()}
 
+    def run_analysis_cycle(self):
+        """Run a complete analysis cycle using all three analyzers"""
+        print("\n--- ЗАПУСК НОВОГО ЦИКЛА АНАЛИЗА ---")
+        
+        # Шаг 1: Получаем оценки от каждого анализатора
+        news_result = self.news_analyzer.analyze_current_news() 
+        basis_result = self.basis_analyzer.analyze_current_basis()
+        # Для historical_analyzer пока используем заглушку
+        historical_result = {'score': 0.6, 'sentiment': 'BULLISH', 'details': '6 of 10 past cases were profitable'}
+
+        # Шаг 2: Агрегируем результаты (простая взвешенная сумма)
+        weights = {'news': 0.2, 'basis': 0.5, 'history': 0.3}
+        
+        # Конвертируем BULLISH/BEARISH в +1/-1
+        sentiments = {
+            'BULLISH': 1,
+            'NEUTRAL': 0,
+            'BEARISH': -1
+        }
+        
+        final_score = (
+            news_result['score'] * sentiments.get(news_result['sentiment'], 0) * weights['news'] +
+            basis_result['score'] * sentiments.get(basis_result['sentiment'], 0) * weights['basis'] +
+            historical_result['score'] * sentiments.get(historical_result['sentiment'], 0) * weights['history']
+        )
+
+        # Шаг 3: Принимаем решение
+        if final_score > 0.5:
+            final_decision = "STRONG BUY"
+        elif final_score > 0.2:
+            final_decision = "BUY"
+        elif final_score < -0.5:
+            final_decision = "STRONG SELL"
+        elif final_score < -0.2:
+            final_decision = "SELL"
+        else:
+            final_decision = "HOLD"
+
+        # Шаг 4: Выводим отчет
+        print("\n--- ФИНАЛЬНЫЙ ОТЧЕТ СИСТЕМЫ ---")
+        print(f"Финальное Решение: {final_decision} (Score: {final_score:.4f})")
+        print("\n--- Детализация по компонентам ---")
+        print(f"Анализ Новостей:   {news_result['sentiment']} (Score: {news_result['score']})")
+        print(f"Анализ Basis:      {basis_result['sentiment']} (Score: {basis_result['score']})")
+        print(f"Анализ Истории:    {historical_result['sentiment']} (Score: {historical_result['score']})")
+        print("---------------------------------")
+
 def main():
     """Main function for testing the pipeline"""
     try:
@@ -237,6 +301,9 @@ def main():
         
         # Get system status
         status = pipeline.get_system_status()
+        
+        # Run analysis cycle
+        pipeline.run_analysis_cycle()
         
         logger.info("✅ Main Pipeline test completed successfully")
         logger.info(f"System Status: {status}")

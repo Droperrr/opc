@@ -166,24 +166,32 @@ class ErrorMonitor:
     def get_error_summary(self) -> Dict:
         """Get comprehensive error summary"""
         try:
+            # Получаем все ошибки через pandas
             conn = sqlite3.connect(self.db_path)
+            df = pd.read_sql_query("SELECT error, normalized_error FROM error_history", conn)
+            conn.close()
             
-            # Overall statistics
-            overall_stats = pd.read_sql_query("""
-                SELECT 
-                    COUNT(*) as total_errors,
-                    AVG(error) as mean_error,
-                    STDDEV(error) as std_error,
-                    AVG(normalized_error) as mean_normalized_error,
-                    STDDEV(normalized_error) as std_normalized_error,
-                    MAX(error) as max_error,
-                    MIN(error) as min_error
-                FROM error_history
-            """, conn)
+            if df.empty:
+                return {
+                    'overall': {},
+                    'by_formula': []
+                }
+            
+            # Вычисляем статистики в Python, так как SQLite не имеет STDDEV
+            overall_stats = {
+                'total_errors': len(df),
+                'mean_error': float(df['error'].mean()),
+                'std_error': float(df['error'].std()),
+                'mean_normalized_error': float(df['normalized_error'].mean()),
+                'std_normalized_error': float(df['normalized_error'].std()),
+                'max_error': float(df['error'].max()),
+                'min_error': float(df['error'].min())
+            }
             
             # Formula-wise statistics
+            conn = sqlite3.connect(self.db_path)
             formula_stats = pd.read_sql_query("""
-                SELECT 
+                SELECT
                     formula_id,
                     COUNT(*) as error_count,
                     AVG(error) as mean_error,
@@ -192,11 +200,10 @@ class ErrorMonitor:
                 GROUP BY formula_id
                 ORDER BY error_count DESC
             """, conn)
-            
             conn.close()
             
             summary = {
-                'overall': overall_stats.to_dict('records')[0] if not overall_stats.empty else {},
+                'overall': overall_stats,
                 'by_formula': formula_stats.to_dict('records') if not formula_stats.empty else []
             }
             

@@ -10,7 +10,7 @@ from logger import get_logger
 
 logger = get_logger()
 
-def generate_trend_signals(db='data/options_enriched.db', iv_table='iv_agg_15m', out_table='trend_signals'):
+def generate_trend_signals(db='server_opc.db', iv_table='iv_agg', timeframe='15m', out_table='trend_signals'):
     """Генерирует трендовые сигналы на основе агрегатов IV и OI"""
     logger.info("🚀 Генерация трендовых сигналов")
     
@@ -19,16 +19,18 @@ def generate_trend_signals(db='data/options_enriched.db', iv_table='iv_agg_15m',
         
         # Проверяем существование таблицы агрегатов
         cursor = conn.cursor()
-        cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{iv_table}'")
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (iv_table,))
         if not cursor.fetchone():
             logger.error(f"❌ Таблица {iv_table} не найдена")
             return None
         
-        # Загружаем данные агрегатов
-        df = pd.read_sql_query(f"SELECT * FROM {iv_table}", conn, parse_dates=['timestamp'])
+        # Загружаем данные агрегатов с фильтрацией по таймфрейму
+        df = pd.read_sql_query(f"SELECT * FROM {iv_table} WHERE timeframe = ?", conn, params=(timeframe,), parse_dates=['time'])
+        # Переименовываем столбец time в timestamp для совместимости
+        df = df.rename(columns={'time': 'timestamp'})
         
         if df.empty:
-            logger.warning(f"⚠️ Нет данных в таблице {iv_table}")
+            logger.warning(f"⚠️ Нет данных в таблице {iv_table} для таймфрейма {timeframe}")
             return None
         
         logger.info(f"📊 Загружено {len(df)} записей агрегатов")
@@ -43,7 +45,7 @@ def generate_trend_signals(db='data/options_enriched.db', iv_table='iv_agg_15m',
         df = df.sort_values('timestamp')
         
         # Вычисляем IV momentum (изменение IV за последние периоды)
-        df['iv_mom'] = df['iv_mean_all'].diff(iv_momentum_periods)
+        df['iv_mom'] = df['iv_30d'].diff(iv_momentum_periods)
         
         signals = []
         
@@ -52,31 +54,19 @@ def generate_trend_signals(db='data/options_enriched.db', iv_table='iv_agg_15m',
             reason = []
             confidence = 0.5
             
-            # Правило 1: BUY сигнал (упрощенное)
-            if row['iv_call_mean'] > row['iv_put_mean']:
-                direction = 'BUY'
-                call_put_diff = ((row['iv_call_mean'] / row['iv_put_mean'] - 1) * 100)
-                reason = f"call>put by {call_put_diff:.1f}%"
-                confidence = min(1.0, (row['iv_call_mean'] / row['iv_put_mean'] - 1) + 0.5)
-            
-            # Правило 2: SELL сигнал (упрощенное)
-            elif row['iv_put_mean'] > row['iv_call_mean']:
-                direction = 'SELL'
-                put_call_diff = ((row['iv_put_mean'] / row['iv_call_mean'] - 1) * 100)
-                reason = f"put>call by {put_call_diff:.1f}%"
-                confidence = min(1.0, (row['iv_put_mean'] / row['iv_call_mean'] - 1) + 0.5)
-            
-            # Правило 3: BULLISH сигнал (по skew)
-            elif row['skew'] > 0.01:
+            # Определяем направление тренда на основе изменения IV
+            if row['iv_mom'] > 0:
                 direction = 'BULLISH'
-                reason = f"positive skew={row['skew']:.4f}"
-                confidence = min(1.0, row['skew'] * 5 + 0.5)
-            
-            # Правило 4: BEARISH сигнал (по skew)
-            elif row['skew'] < -0.01:
+                reason = f"IV растет на {row['iv_mom']:.4f}"
+                confidence = min(1.0, abs(row['iv_mom']) * 10 + 0.5)
+            elif row['iv_mom'] < 0:
                 direction = 'BEARISH'
-                reason = f"negative skew={row['skew']:.4f}"
-                confidence = min(1.0, abs(row['skew']) * 5 + 0.5)
+                reason = f"IV падает на {row['iv_mom']:.4f}"
+                confidence = min(1.0, abs(row['iv_mom']) * 10 + 0.5)
+            else:
+                direction = 'NEUTRAL'
+                reason = "IV стабилен"
+                confidence = 0.5
             
             if direction:
                 signals.append({
@@ -85,10 +75,8 @@ def generate_trend_signals(db='data/options_enriched.db', iv_table='iv_agg_15m',
                     'direction': direction,
                     'confidence': round(confidence, 2),
                     'reason': reason,
-                    'iv_call_mean': row['iv_call_mean'],
-                    'iv_put_mean': row['iv_put_mean'],
-                    'skew': row['skew'],
-                    'oi_ratio': row['oi_ratio'],
+                    'iv_30d': row['iv_30d'],
+                    'skew_30d': row['skew_30d'],
                     'iv_momentum': row['iv_mom']
                 })
         
@@ -128,10 +116,10 @@ def generate_signals_for_all_timeframes():
     for timeframe in timeframes:
         logger.info(f"📊 Обрабатываем таймфрейм: {timeframe}")
         
-        iv_table = f'iv_agg_{timeframe}'
+        iv_table = 'iv_agg'
         out_table = f'trend_signals_{timeframe}'
         
-        signals = generate_trend_signals(iv_table=iv_table, out_table=out_table)
+        signals = generate_trend_signals(iv_table=iv_table, timeframe=timeframe, out_table=out_table)
         
         if signals is not None:
             all_signals.append(signals)
@@ -176,15 +164,15 @@ def analyze_signal_distribution():
         print(f"  Минимум: {df['confidence'].min():.3f}")
         print(f"  Максимум: {df['confidence'].max():.3f}")
         
-        # Статистика по skew
-        print(f"\nСтатистика skew:")
-        print(f"  Среднее: {df['skew'].mean():.4f}")
-        print(f"  Медиана: {df['skew'].median():.4f}")
+        # Статистика по IV 30d
+        print(f"\nСтатистика IV 30d:")
+        print(f"  Среднее: {df['iv_30d'].mean():.4f}")
+        print(f"  Медиана: {df['iv_30d'].median():.4f}")
         
-        # Статистика по OI ratio
-        print(f"\nСтатистика OI ratio:")
-        print(f"  Среднее: {df['oi_ratio'].mean():.3f}")
-        print(f"  Медиана: {df['oi_ratio'].median():.3f}")
+        # Статистика по skew 30d
+        print(f"\nСтатистика skew 30d:")
+        print(f"  Среднее: {df['skew_30d'].mean():.4f}")
+        print(f"  Медиана: {df['skew_30d'].median():.4f}")
         
     except Exception as e:
         logger.error(f"❌ Ошибка анализа распределения: {e}")
