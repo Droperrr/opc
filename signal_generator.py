@@ -4,42 +4,103 @@ import numpy as np
 from datetime import datetime, timedelta
 from logger import get_logger
 import os
+import argparse
 
 logger = get_logger()
 
 class SignalGenerator:
-    def __init__(self):
+    def __init__(self, symbol='BTCUSDT', dataset_tag='training_2023', db_path='server_opc.db'):
+        self.symbol = symbol
+        self.dataset_tag = dataset_tag
+        self.db_path = db_path
         self.signals = []
-        self.db_path = 'data/options_enriched.db'
         
     def load_aggregated_data(self):
-        """Загружает агрегированные данные IV, Skew, OI"""
+        """Загружает агрегированные данные IV, Skew, OI с фильтрацией по symbol и dataset_tag"""
         try:
-            df = pd.read_csv('iv_aggregates_sample.csv')
+            # Подключаемся к базе данных
+            conn = sqlite3.connect(self.db_path)
+            
+            # Загружаем данные из таблицы iv_agg с фильтрацией
+            df = pd.read_sql_query("""
+                SELECT * FROM iv_agg 
+                WHERE symbol = ? AND dataset_tag = ?
+                ORDER BY time
+            """, conn, params=(self.symbol, self.dataset_tag), parse_dates=['time'])
+            
+            # Переименовываем столбец time в timestamp для совместимости
+            df = df.rename(columns={'time': 'timestamp'})
+            
+            conn.close()
+            
+            if df.empty:
+                logger.warning(f"⚠️ Нет агрегированных данных для {self.symbol} ({self.dataset_tag})")
+                return pd.DataFrame()
+            
             df['timestamp'] = pd.to_datetime(df['timestamp'])
-            logger.info(f"📊 Загружено {len(df)} записей агрегированных данных")
+            logger.info(f"📊 Загружено {len(df)} записей агрегированных данных для {self.symbol} ({self.dataset_tag})")
             return df
         except Exception as e:
             logger.error(f"❌ Ошибка загрузки агрегированных данных: {e}")
             return pd.DataFrame()
     
     def load_trend_signals(self):
-        """Загружает трендовые сигналы"""
+        """Загружает трендовые сигналы с фильтрацией по symbol и dataset_tag"""
         try:
-            df = pd.read_csv('trend_signals.csv')
+            # Подключаемся к базе данных
+            conn = sqlite3.connect(self.db_path)
+            
+            # Загружаем данные из таблицы trend_signals_15m с фильтрацией
+            df_15m = pd.read_sql_query("""
+                SELECT * FROM trend_signals_15m 
+                WHERE symbol = ? AND dataset_tag = ?
+                ORDER BY timestamp
+            """, conn, params=(self.symbol, self.dataset_tag), parse_dates=['timestamp'])
+            
+            # Загружаем данные из таблицы trend_signals_1h с фильтрацией
+            df_1h = pd.read_sql_query("""
+                SELECT * FROM trend_signals_1h 
+                WHERE symbol = ? AND dataset_tag = ?
+                ORDER BY timestamp
+            """, conn, params=(self.symbol, self.dataset_tag), parse_dates=['timestamp'])
+            
+            conn.close()
+            
+            # Объединяем данные
+            df = pd.concat([df_15m, df_1h], ignore_index=True)
+            
+            if df.empty:
+                logger.warning(f"⚠️ Нет трендовых сигналов для {self.symbol} ({self.dataset_tag})")
+                return pd.DataFrame()
+            
             df['timestamp'] = pd.to_datetime(df['timestamp'])
-            logger.info(f"📈 Загружено {len(df)} трендовых сигналов")
+            logger.info(f"📈 Загружено {len(df)} трендовых сигналов для {self.symbol} ({self.dataset_tag})")
             return df
         except Exception as e:
             logger.error(f"❌ Ошибка загрузки трендовых сигналов: {e}")
             return pd.DataFrame()
     
     def load_entry_points(self):
-        """Загружает точки входа"""
+        """Загружает точки входа с фильтрацией по symbol и dataset_tag"""
         try:
-            df = pd.read_csv('entry_points.csv')
+            # Подключаемся к базе данных
+            conn = sqlite3.connect(self.db_path)
+            
+            # Загружаем данные из таблицы entry_points с фильтрацией
+            df = pd.read_sql_query("""
+                SELECT * FROM entry_points 
+                WHERE symbol = ? AND dataset_tag = ?
+                ORDER BY timestamp
+            """, conn, params=(self.symbol, self.dataset_tag), parse_dates=['timestamp'])
+            
+            conn.close()
+            
+            if df.empty:
+                logger.warning(f"⚠️ Нет точек входа для {self.symbol} ({self.dataset_tag})")
+                return pd.DataFrame()
+            
             df['timestamp'] = pd.to_datetime(df['timestamp'])
-            logger.info(f"🎯 Загружено {len(df)} точек входа")
+            logger.info(f"🎯 Загружено {len(df)} точек входа для {self.symbol} ({self.dataset_tag})")
             return df
         except Exception as e:
             logger.error(f"❌ Ошибка загрузки точек входа: {e}")
@@ -85,20 +146,22 @@ class SignalGenerator:
             combined_record = {
                 'timestamp': timestamp,
                 'timeframe': timeframe,
-                'underlying_price': agg_row.get('underlying_price'),
-                'iv_mean_all': agg_row.get('iv_mean_all'),
-                'iv_call_mean': agg_row.get('iv_call_mean'),
-                'iv_put_mean': agg_row.get('iv_put_mean'),
-                'skew': agg_row.get('skew'),
-                'oi_ratio': agg_row.get('oi_ratio'),
-                'skew_percentile': agg_row.get('skew_percentile'),
+                'underlying_price': agg_row.get('spot_price'),
+                'iv_mean_all': agg_row.get('iv_30d'),
+                'iv_call_mean': None,  # Для совместимости
+                'iv_put_mean': None,   # Для совместимости
+                'skew': agg_row.get('skew_30d'),
+                'oi_ratio': agg_row.get('oi_total'),
+                'skew_percentile': None,  # Для совместимости
                 'trend_direction': trend_info['direction'] if trend_info is not None else None,
                 'trend_confidence': trend_info['confidence'] if trend_info is not None else None,
                 'trend_reason': trend_info['reason'] if trend_info is not None else None,
                 'entry_direction': entry_info['direction'] if entry_info is not None else None,
                 'entry_confidence': entry_info['confidence'] if entry_info is not None else None,
                 'entry_reason': entry_info['reason'] if entry_info is not None else None,
-                'iv_spike': entry_info['iv_spike'] if entry_info is not None else None
+                'iv_spike': entry_info['iv_momentum'] if entry_info is not None else None,
+                'symbol': self.symbol,
+                'dataset_tag': self.dataset_tag
             }
             
             combined_data.append(combined_record)
@@ -109,7 +172,7 @@ class SignalGenerator:
         """Генерирует сигналы на основе объединенных данных"""
         signals = []
         
-        logger.info(f"🔍 Анализируем {len(combined_data)} записей для генерации сигналов")
+        logger.info(f"🔍 Анализируем {len(combined_data)} записей для генерации сигналов для {self.symbol} ({self.dataset_tag})")
         
         for _, row in combined_data.iterrows():
             # Пропускаем записи без необходимых данных
@@ -192,7 +255,9 @@ class SignalGenerator:
                     'trend_direction': row['trend_direction'],
                     'trend_confidence': row['trend_confidence'],
                     'entry_direction': row['entry_direction'],
-                    'entry_confidence': row['entry_confidence']
+                    'entry_confidence': row['entry_confidence'],
+                    'symbol': self.symbol,
+                    'dataset_tag': self.dataset_tag
                 })
         
         return signals
@@ -201,8 +266,9 @@ class SignalGenerator:
         """Сохраняет сигналы в CSV файл"""
         if signals:
             df = pd.DataFrame(signals)
-            df.to_csv('signals.csv', index=False)
-            logger.info(f"💾 Сохранено {len(signals)} сигналов в signals.csv")
+            filename = f'signals_{self.symbol}_{self.dataset_tag}.csv'
+            df.to_csv(filename, index=False)
+            logger.info(f"💾 Сохранено {len(signals)} сигналов в {filename}")
             return df
         else:
             logger.warning("⚠️ Нет сигналов для сохранения")
@@ -232,7 +298,7 @@ class SignalGenerator:
             'skew': 'mean'
         }).round(3)
         
-        logger.info("📊 Статистика сигналов:")
+        logger.info(f"📊 Статистика сигналов для {self.symbol} ({self.dataset_tag}):")
         logger.info(f"   Всего сигналов: {stats['total_signals']}")
         logger.info(f"   BUY: {stats['buy_signals']}, SELL: {stats['sell_signals']}")
         logger.info(f"   Средняя уверенность: {stats['avg_confidence']:.3f}")
@@ -248,7 +314,7 @@ class SignalGenerator:
     
     def run(self):
         """Основной метод запуска генератора сигналов"""
-        logger.info("🚀 Запуск генератора сигналов...")
+        logger.info(f"🚀 Запуск генератора сигналов для {self.symbol} ({self.dataset_tag})...")
         
         # Загружаем данные
         agg_data = self.load_aggregated_data()
@@ -284,6 +350,20 @@ class SignalGenerator:
         else:
             logger.warning("⚠️ Не удалось сгенерировать сигналы")
 
-if __name__ == "__main__":
-    generator = SignalGenerator()
+def main():
+    """Основная функция"""
+    parser = argparse.ArgumentParser(description='Генератор сигналов для системы OPC')
+    parser.add_argument('--symbol', default='BTCUSDT',
+                       help='Символ актива (например, BTCUSDT, SOLUSDT)')
+    parser.add_argument('--tag', default='training_2023',
+                       help='Тег набора данных (например, training_2023, live_2025)')
+    parser.add_argument('--db', default='server_opc.db',
+                       help='Путь к базе данных')
+    
+    args = parser.parse_args()
+    
+    generator = SignalGenerator(args.symbol, args.tag, args.db)
     generator.run()
+
+if __name__ == "__main__":
+    main()

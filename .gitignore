@@ -46,6 +46,12 @@ run_s10_*.py
 system_full_test.py
 expectation_vs_reality_demo.html
 bant_backup.sql
+# --- Добавлено для соответствия требованиям задачи OPC-GIT-SYNC-V1 ---
+*.parquet
+*results*/
+opc_env/
+opc_ml_env/
+*archive*/
 
 # --- Резервные копии и временные файлы ---
 *.bak

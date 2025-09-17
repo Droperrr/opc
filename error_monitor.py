@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 class ErrorMonitor:
     """Monitors prediction errors and maintains error history"""
     
-    def __init__(self, db_path: str = "data/sol_iv.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = "server_opc.db"):
+        self.db_path = db_path or "server_opc.db"
         self.init_database()
     
     def init_database(self):

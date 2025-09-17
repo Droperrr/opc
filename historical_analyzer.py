@@ -2,8 +2,10 @@ import pandas as pd
 import sqlite3
 
 class HistoricalAnalyzer:
-    def __init__(self, db_path='server_opc.db'):
+    def __init__(self, db_path='server_opc.db', symbol='BTCUSDT', dataset_tag='training_2023'):
         self.db_path = db_path
+        self.symbol = symbol
+        self.dataset_tag = dataset_tag
         self.historical_data = None
 
     def load_historical_data(self):
@@ -12,10 +14,21 @@ class HistoricalAnalyzer:
             try:
                 with sqlite3.connect(self.db_path) as conn:
                     # Загружаем данные из таблицы iv_agg с фильтрацией по таймфрейму 1m
-                    iv_df = pd.read_sql_query("SELECT * FROM iv_agg WHERE timeframe = '1m'", conn)
+                    iv_query = """
+                        SELECT * FROM iv_agg
+                        WHERE timeframe = '1m'
+                        AND symbol = ?
+                        AND dataset_tag = ?
+                    """
+                    iv_df = pd.read_sql_query(iv_query, conn, params=(self.symbol, self.dataset_tag))
                     
                     # Загружаем данные из таблицы trend_signals_15m
-                    trend_df = pd.read_sql_query("SELECT * FROM trend_signals_15m", conn)
+                    trend_query = """
+                        SELECT * FROM trend_signals_15m
+                        WHERE symbol = ?
+                        AND dataset_tag = ?
+                    """
+                    trend_df = pd.read_sql_query(trend_query, conn, params=(self.symbol, self.dataset_tag))
                     
                     # Преобразуем временные метки в datetime
                     iv_df['time'] = pd.to_datetime(iv_df['time'])

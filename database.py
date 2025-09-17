@@ -43,6 +43,7 @@ class IVDatabase:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     time TEXT NOT NULL,
                     symbol TEXT NOT NULL,
+                    dataset_tag TEXT NOT NULL,
                     markIv REAL,
                     bid1Iv REAL,
                     ask1Iv REAL,
@@ -52,6 +53,8 @@ class IVDatabase:
                     gamma REAL NOT NULL,
                     vega REAL NOT NULL,
                     theta REAL NOT NULL,
+                    open_interest REAL,
+                    volume_24h REAL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """
@@ -87,9 +90,10 @@ class IVDatabase:
                 
                 insert_sql = """
                 INSERT INTO iv_data (
-                    time, symbol, markIv, bid1Iv, ask1Iv, 
-                    markPrice, underlyingPrice, delta, gamma, vega, theta
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    time, symbol, dataset_tag, markIv, bid1Iv, ask1Iv,
+                    markPrice, underlyingPrice, delta, gamma, vega, theta,
+                    open_interest, volume_24h
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 
                 # Подготавливаем данные для вставки
@@ -98,6 +102,7 @@ class IVDatabase:
                     values.append((
                         data['time'].isoformat() if hasattr(data['time'], 'isoformat') else str(data['time']),
                         data['symbol'],
+                        data.get('dataset_tag', 'training_2023'),  # Значение по умолчанию
                         data['markIv'],
                         data['bid1Iv'],
                         data['ask1Iv'],
@@ -106,7 +111,9 @@ class IVDatabase:
                         data['delta'],
                         data['gamma'],
                         data['vega'],
-                        data['theta']
+                        data['theta'],
+                        data.get('openInterest', 0),
+                        data.get('volume24h', 0)
                     ))
                 
                 cursor.executemany(insert_sql, values)
@@ -133,9 +140,10 @@ class IVDatabase:
                 cursor = conn.cursor()
                 
                 select_sql = """
-                SELECT time, symbol, markIv, bid1Iv, ask1Iv, 
-                       markPrice, underlyingPrice, delta, gamma, vega, theta
-                FROM iv_data 
+                SELECT time, symbol, dataset_tag, markIv, bid1Iv, ask1Iv,
+                       markPrice, underlyingPrice, delta, gamma, vega, theta,
+                       open_interest, volume_24h
+                FROM iv_data
                 WHERE DATE(time) = ?
                 ORDER BY time
                 """
@@ -149,15 +157,18 @@ class IVDatabase:
                     data.append({
                         'time': row[0],
                         'symbol': row[1],
-                        'markIv': row[2],
-                        'bid1Iv': row[3],
-                        'ask1Iv': row[4],
-                        'markPrice': row[5],
-                        'underlyingPrice': row[6],
-                        'delta': row[7],
-                        'gamma': row[8],
-                        'vega': row[9],
-                        'theta': row[10]
+                        'dataset_tag': row[2],
+                        'markIv': row[3],
+                        'bid1Iv': row[4],
+                        'ask1Iv': row[5],
+                        'markPrice': row[6],
+                        'underlyingPrice': row[7],
+                        'delta': row[8],
+                        'gamma': row[9],
+                        'vega': row[10],
+                        'theta': row[11],
+                        'openInterest': row[12],
+                        'volume24h': row[13]
                     })
                 
                 logger.info(f"📊 Получено {len(data)} записей за {date}")
@@ -254,7 +265,9 @@ if __name__ == "__main__":
             'delta': -0.9669,
             'gamma': 0.0012,
             'vega': 0.0377,
-            'theta': -0.0921
+            'theta': -0.0921,
+            'openInterest': 1000.0,
+            'volume24h': 5000.0
         }
     ]
     

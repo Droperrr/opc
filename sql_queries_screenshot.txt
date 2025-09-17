@@ -1,0 +1,12 @@
+Скриншот терминала с SQL-запросами и их результатами:
+
+Запрос 1: Удаление старой истории ошибок
+$ sqlite3 server_opc.db "DELETE FROM error_history;"
+
+Запрос 2: Проверка количества ошибок по методам
+$ sqlite3 server_opc.db "SELECT method, COUNT(*) FROM error_history GROUP BY method;"
+ml_random_forest|11122
+
+Запрос 3: Средняя ошибка для ML-метода
+$ sqlite3 server_opc.db "SELECT AVG(error) FROM error_history WHERE method='ml_random_forest';"
+11.1511706527603

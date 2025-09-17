@@ -3,6 +3,8 @@ Main Pipeline for BANT Project
 Orchestrates the complete trading system workflow
 """
 
+from config import OPERATION_MODE
+
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -27,8 +29,13 @@ logger = logging.getLogger(__name__)
 class MainPipeline:
     """Main pipeline orchestrating the complete BANT system"""
     
-    def __init__(self, db_path: str = "data/sol_iv.db"):
+    def __init__(self, db_path: str = "data/sol_iv.db", symbol: str = "BTCUSDT"):
         self.db_path = db_path
+        self.symbol = symbol
+        
+        # Определяем dataset_tag на основе OPERATION_MODE из config.py
+        from config import OPERATION_MODE
+        self.dataset_tag = "training_2023" if OPERATION_MODE == "TRAINING" else "live_2025"
         
         # Initialize components
         self.prediction_layer = PredictionLayer()
@@ -39,11 +46,11 @@ class MainPipeline:
         self.block_reporter = BlockReporter(db_path)
         
         # Initialize analyzers
-        self.historical_analyzer = HistoricalAnalyzer(db_path)
+        self.historical_analyzer = HistoricalAnalyzer(db_path, self.symbol, self.dataset_tag)
         self.news_analyzer = NewsAnalyzer()
-        self.basis_analyzer = BasisAnalyzer(db_path)
+        self.basis_analyzer = BasisAnalyzer(db_path, self.symbol, self.dataset_tag)
         
-        logger.info("🚀 Main Pipeline initialized with all components")
+        logger.info(f"🚀 Main Pipeline initialized with all components for {self.symbol} ({self.dataset_tag})")
     
     def run_prediction_cycle(self, prices: List[float], 
                            volatility: float = 1.0,
@@ -241,9 +248,10 @@ class MainPipeline:
     def run_analysis_cycle(self):
         """Run a complete analysis cycle using all three analyzers"""
         print("\n--- ЗАПУСК НОВОГО ЦИКЛА АНАЛИЗА ---")
+        print(f"Актив: {self.symbol}, Набор данных: {self.dataset_tag}")
         
         # Шаг 1: Получаем оценки от каждого анализатора
-        news_result = self.news_analyzer.analyze_current_news() 
+        news_result = self.news_analyzer.analyze_current_news()
         basis_result = self.basis_analyzer.analyze_current_basis()
         # Для historical_analyzer пока используем заглушку
         historical_result = {'score': 0.6, 'sentiment': 'BULLISH', 'details': '6 of 10 past cases were profitable'}
@@ -278,6 +286,8 @@ class MainPipeline:
 
         # Шаг 4: Выводим отчет
         print("\n--- ФИНАЛЬНЫЙ ОТЧЕТ СИСТЕМЫ ---")
+        year = "2023" if OPERATION_MODE == 'TRAINING' else "2025"
+        print(f"РЕЖИМ РАБОТЫ: {OPERATION_MODE} (Данные за {year} год)")
         print(f"Финальное Решение: {final_decision} (Score: {final_score:.4f})")
         print("\n--- Детализация по компонентам ---")
         print(f"Анализ Новостей:   {news_result['sentiment']} (Score: {news_result['score']})")
@@ -290,8 +300,8 @@ def main():
     try:
         logger.info("🚀 Starting BANT Main Pipeline")
         
-        # Initialize pipeline
-        pipeline = MainPipeline()
+        # Initialize pipeline with default symbol BTCUSDT
+        pipeline = MainPipeline(symbol="BTCUSDT")
         
         # Test with sample data
         sample_prices = [100.0, 105.0, 95.0, 110.0, 90.0, 115.0, 85.0, 120.0]

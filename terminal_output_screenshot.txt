@@ -1,0 +1,39 @@
+Скриншот терминала с выводом работы обновленного бэктестера:
+
+Запуск бэктеста для SOLUSDT с тегом training_2023 с 2023-01-01 по 2023-01-07
+Предупреждение: Не удалось загрузить исторические данные: time data "2025-09-03 17:45:08" doesn't match format "%Y-%m-%dT%H:%M:%S", at position 1. You might want to try:
+    - passing `format` if your strings have a consistent format;
+    - passing `format='ISO8601'` if your strings are all ISO8601 but not necessarily in exactly the same format;
+    - passing `format='mixed'`, and the format will be inferred for each element individually. You might want to use `dayfirst` alongside this.
+WARNING:prediction_layer:⚠️ Не удалось загрузить ML модель: numpy.dtype size changed, may indicate binary incompatibility. Expected 96 from C header, got 88 from PyObject
+INFO:prediction_layer:🔮 PredictionLayer инициализирован с окном 5
+INFO:error_monitor:✅ Error history table initialized
+INFO:block_detector:✅ Таблицы блоков инициализированы
+INFO:block_detector:🔍 BlockDetector инициализирован с БД: server_opc.db
+INFO:block_analyzer:📊 BlockAnalyzer инициализирован с БД: server_opc.db
+INFO:block_analyzer:📊 BlockAnalyzer инициализирован с БД: server_opc.db
+INFO:formula_engine_blocks:✅ Таблицы Formula Engine с блоками инициализированы
+INFO:formula_engine_blocks:✅ Загружено 3 шаблонов формул
+INFO:formula_engine_blocks:🔧 FormulaEngineBlocks инициализирован с БД: server_opc.db
+Выполнение векторизованных расчетов...
+Обновление монитора ошибок с использованием ML модели...
+WARNING:prediction_layer:ML модель не загружена, используем фиктивное значение
+INFO:error_monitor:✅ Error recorded: 8.9400 (normalized: 149.0000)
+WARNING:prediction_layer:ML модель не загружена, используем фиктивное значение
+INFO:error_monitor:✅ Error recorded: 8.9900 (normalized: 179.8000)
+...
+WARNING:prediction_layer:ML модель не загружена, используем фиктивное значение
+INFO:error_monitor:✅ Error recorded: 12.5100 (normalized: 625.5000)
+Принятие решений...
+Найдено 8901 сигналов:
+Отчет: {'timestamp': Timestamp('2023-01-01 00:00:00'), 'decision': 'BUY', 'basis_score': 0.8, 'historical_score': 0.5, 'news_score': 0.5, 'final_score': 0.7799999999999999, 'regime': 'unknown', 'threshold': 0.6}
+Отчет: {'timestamp': Timestamp('2023-01-01 00:05:00'), 'decision': 'BUY', 'basis_score': 0.8, 'historical_score': 0.5, 'news_score': 0.5, 'final_score': 0.7799999999999999, 'regime': 'unknown', 'threshold': 0.6}
+...
+Бэктест с использованием ML модели завершен за 263.12 секунд
+
+==================================================
+--- СВОДКА ПО РЫНОЧНЫМ РЕЖИМАМ ---
+Обнаружено 1 уникальных режима:
+- UNKNOWN: 111 раз (100.0%)
+------------------------------------
+==================================================

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Historical Basis Data Collector for SOL Futures
-Collects historical basis data (futures-spot spread) for the 2025 period
+Historical Basis Data Collector for Multi-Asset Futures
+Collects historical basis data (futures-spot spread) for multiple assets
 """
 
 import requests
@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 import os
 from typing import List, Dict, Optional
 import numpy as np
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 # Настройка логирования
 logging.basicConfig(
@@ -27,7 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class HistoricalBasisCollector:
-    def __init__(self, db_path: str = 'data/sol_iv.db'):
+    def __init__(self, db_path: str = 'server_opc.db'):
         self.db_path = db_path
         self.base_url = 'https://api.bybit.com'
         self.session = requests.Session()
@@ -54,6 +55,7 @@ class HistoricalBasisCollector:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     time TEXT NOT NULL,
                     symbol TEXT NOT NULL,
+                    dataset_tag TEXT NOT NULL,
                     futures_price REAL,
                     spot_price REAL,
                     basis_abs REAL,
@@ -62,7 +64,7 @@ class HistoricalBasisCollector:
                     open_interest REAL,
                     volume_24h REAL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(time, symbol)
+                    UNIQUE(time, symbol, dataset_tag)
                 )
             ''')
             
@@ -72,20 +74,25 @@ class HistoricalBasisCollector:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     time TEXT NOT NULL,
                     timeframe TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    dataset_tag TEXT NOT NULL,
                     basis_rel REAL,
                     basis_abs REAL,
                     funding_rate REAL,
                     oi_total REAL,
                     volume_total REAL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(time, timeframe)
+                    UNIQUE(time, timeframe, symbol, dataset_tag)
                 )
             ''')
             
             # Индексы для быстрого поиска
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_historical_basis_time ON historical_basis_data(time)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_historical_basis_symbol ON historical_basis_data(symbol)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_historical_basis_dataset_tag ON historical_basis_data(dataset_tag)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_basis_agg_historical_time ON basis_agg_historical(time)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_basis_agg_historical_symbol ON basis_agg_historical(symbol)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_basis_agg_historical_dataset_tag ON basis_agg_historical(dataset_tag)')
             
             conn.commit()
             conn.close()
@@ -95,7 +102,7 @@ class HistoricalBasisCollector:
             logger.error(f"❌ Ошибка инициализации БД: {e}")
     
     def get_futures_symbols(self, base_coin='SOL', return_all=False):
-        """Получить список доступных символов фьючерсов для SOL."""
+        """Получить список доступных символов фьючерсов для указанного актива."""
         logger.info(f"🔍 Поиск фьючерсов для {base_coin}")
         
         try:
@@ -126,6 +133,7 @@ class HistoricalBasisCollector:
             logger.error(f"❌ Исключение при получении символов: {e}")
             return None
     
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
     def get_historical_kline_data(self, symbol: str, interval: str, 
                                  start_time: str, end_time: str, limit: int = 1000) -> Optional[List]:
         """Получение исторических данных свечей для фьючерсов"""
@@ -156,11 +164,12 @@ class HistoricalBasisCollector:
             
         except requests.exceptions.RequestException as e:
             logger.error(f"❌ Ошибка запроса: {e}")
-            return None
+            raise  # Повторная попытка благодаря декоратору @retry
         except Exception as e:
             logger.error(f"❌ Неожиданная ошибка: {e}")
-            return None
+            raise
     
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
     def get_funding_rate(self, symbol: str, start_time: str, end_time: str) -> Optional[List]:
         """Получение исторических данных funding rate"""
         try:
@@ -189,11 +198,12 @@ class HistoricalBasisCollector:
             
         except requests.exceptions.RequestException as e:
             logger.error(f"❌ Ошибка запроса funding rate: {e}")
-            return None
+            raise  # Повторная попытка благодаря декоратору @retry
         except Exception as e:
             logger.error(f"❌ Неожиданная ошибка funding rate: {e}")
-            return None
+            raise
     
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
     def get_open_interest(self, symbol: str, start_time: str, end_time: str) -> Optional[List]:
         """Получение исторических данных open interest"""
         try:
@@ -223,127 +233,109 @@ class HistoricalBasisCollector:
             
         except requests.exceptions.RequestException as e:
             logger.error(f"❌ Ошибка запроса open interest: {e}")
-            return None
+            raise  # Повторная попытка благодаря декоратору @retry
         except Exception as e:
             logger.error(f"❌ Неожиданная ошибка open interest: {e}")
-            return None
+            raise
     
-    def collect_historical_basis_data(self, start_date: str, end_date: str, max_symbols: int = 20):
-        """Сбор исторических basis данных для фьючерсов SOL"""
+    def collect_historical_basis_data(self, symbol: str, dataset_tag: str, start_date: str, end_date: str):
+        """Сбор исторических basis данных для фьючерсов"""
         try:
-            # Получаем список символов фьючерсов
-            symbols = self.get_futures_symbols('SOL', return_all=True)
-            if not symbols:
-                logger.error("❌ Не удалось получить список символов фьючерсов")
-                return False
-            
-            # Ограничиваем количество символов
-            if max_symbols:
-                symbols = symbols[:max_symbols]
-                logger.info(f"🔢 Ограничиваем сбор до {max_symbols} символов")
-            
-            logger.info(f"🚀 Начинаю сбор исторических basis данных для {len(symbols)} символов")
+            logger.info(f"🚀 Начинаю сбор исторических basis данных для {symbol}")
             logger.info(f"📅 Период: {start_date} - {end_date}")
+            logger.info(f"🏷️  Тег набора данных: {dataset_tag}")
             
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
             total_records = 0
             
-            for i, symbol in enumerate(symbols, 1):
-                logger.info(f"📈 Обрабатываем {i}/{len(symbols)}: {symbol}")
+            # Конвертируем даты в timestamp
+            start_ts = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp() * 1000)
+            end_ts = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp() * 1000)
+            
+            current_ts = start_ts
+            
+            while current_ts < end_ts:
+                # Вычисляем следующий timestamp (1 день)
+                next_ts = current_ts + (1000 * 24 * 60 * 60 * 1000)  # +1 день
+                if next_ts > end_ts:
+                    next_ts = end_ts
                 
-                try:
-                    # Конвертируем даты в timestamp
-                    start_ts = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp() * 1000)
-                    end_ts = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp() * 1000)
-                    
-                    current_ts = start_ts
-                    
-                    while current_ts < end_ts:
-                        # Вычисляем следующий timestamp (1 день)
-                        next_ts = current_ts + (1000 * 24 * 60 * 60 * 1000)  # +1 день
-                        if next_ts > end_ts:
-                            next_ts = end_ts
-                        
-                        # Получаем исторические данные фьючерсов
-                        futures_kline_data = self.get_historical_kline_data(
-                            symbol, 'D', str(current_ts), str(next_ts)
-                        )
-                        
-                        if futures_kline_data:
-                            for candle in futures_kline_data:
-                                try:
-                                    timestamp = int(candle[0])
-                                    time_str = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
-                                    futures_price = float(candle[4])  # close price
-                                    volume_24h = float(candle[5])
-                                    
-                                    # Получаем спотовую цену для этого времени
-                                    spot_query = """
-                                    SELECT close FROM spot_data 
-                                    WHERE time <= ? AND timeframe = '1m'
-                                    ORDER BY time DESC LIMIT 1
-                                    """
-                                    cursor.execute(spot_query, [time_str])
-                                    spot_result = cursor.fetchone()
-                                    
-                                    if not spot_result:
-                                        continue
-                                    
-                                    spot_price = float(spot_result[0])
-                                    
-                                    # Вычисляем basis
-                                    basis_abs = futures_price - spot_price
-                                    basis_rel = basis_abs / spot_price if spot_price > 0 else 0
-                                    
-                                    # Получаем funding rate для этого времени
-                                    funding_rate = 0.0  # По умолчанию
-                                    try:
-                                        funding_data = self.get_funding_rate(symbol, str(timestamp), str(timestamp + 86400000))
-                                        if funding_data:
-                                            funding_rate = float(funding_data[0]['fundingRate']) if funding_data[0]['fundingRate'] != '0' else 0.0
-                                    except:
-                                        pass
-                                    
-                                    # Получаем open interest для этого времени
-                                    open_interest = 0.0  # По умолчанию
-                                    try:
-                                        oi_data = self.get_open_interest(symbol, str(timestamp), str(timestamp + 86400000))
-                                        if oi_data:
-                                            open_interest = float(oi_data[0]['openInterest']) if oi_data[0]['openInterest'] != '0' else 0.0
-                                    except:
-                                        pass
-                                    
-                                    # Сохраняем данные
-                                    cursor.execute('''
-                                        INSERT OR REPLACE INTO historical_basis_data 
-                                        (time, symbol, futures_price, spot_price, basis_abs, basis_rel, 
-                                         funding_rate, open_interest, volume_24h)
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                    ''', (
-                                        time_str, symbol, futures_price, spot_price, basis_abs, basis_rel,
-                                        funding_rate, open_interest, volume_24h
-                                    ))
-                                    
-                                    total_records += 1
-                                    
-                                except Exception as e:
-                                    logger.warning(f"⚠️ Ошибка обработки свечи: {e}")
-                                    continue
+                # Получаем исторические данные фьючерсов
+                futures_kline_data = self.get_historical_kline_data(
+                    symbol, 'D', str(current_ts), str(next_ts)
+                )
+                
+                if futures_kline_data:
+                    for candle in futures_kline_data:
+                        try:
+                            timestamp = int(candle[0])
+                            time_str = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
+                            futures_price = float(candle[4])  # close price
+                            volume_24h = float(candle[5])
                             
-                            conn.commit()
-                            logger.info(f"✅ Сохранено {len(futures_kline_data)} записей для {symbol}")
-                        
-                        # Следующий период
-                        current_ts = next_ts
-                        
-                        # Задержка для соблюдения rate limit
-                        time.sleep(self.RATE_LIMIT_DELAY)
+                            # Получаем спотовую цену для этого времени
+                            spot_query = """
+                            SELECT close FROM spot_data 
+                            WHERE time <= ? AND timeframe = '1m' AND symbol = ? AND dataset_tag = ?
+                            ORDER BY time DESC LIMIT 1
+                            """
+                            cursor.execute(spot_query, [time_str, symbol.replace('-PERP', 'USDT'), dataset_tag])
+                            spot_result = cursor.fetchone()
+                            
+                            if not spot_result:
+                                continue
+                            
+                            spot_price = float(spot_result[0])
+                            
+                            # Вычисляем basis
+                            basis_abs = futures_price - spot_price
+                            basis_rel = basis_abs / spot_price if spot_price > 0 else 0
+                            
+                            # Получаем funding rate для этого времени
+                            funding_rate = 0.0  # По умолчанию
+                            try:
+                                funding_data = self.get_funding_rate(symbol, str(timestamp), str(timestamp + 86400000))
+                                if funding_data:
+                                    funding_rate = float(funding_data[0]['fundingRate']) if funding_data[0]['fundingRate'] != '0' else 0.0
+                            except:
+                                pass
+                            
+                            # Получаем open interest для этого времени
+                            open_interest = 0.0  # По умолчанию
+                            try:
+                                oi_data = self.get_open_interest(symbol, str(timestamp), str(timestamp + 86400000))
+                                if oi_data:
+                                    open_interest = float(oi_data[0]['openInterest']) if oi_data[0]['openInterest'] != '0' else 0.0
+                            except:
+                                pass
+                            
+                            # Сохраняем данные
+                            cursor.execute('''
+                                INSERT OR REPLACE INTO historical_basis_data 
+                                (time, symbol, dataset_tag, futures_price, spot_price, basis_abs, basis_rel, 
+                                 funding_rate, open_interest, volume_24h)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ''', (
+                                time_str, symbol, dataset_tag, futures_price, spot_price, basis_abs, basis_rel,
+                                funding_rate, open_interest, volume_24h
+                            ))
+                            
+                            total_records += 1
+                            
+                        except Exception as e:
+                            logger.warning(f"⚠️ Ошибка обработки свечи: {e}")
+                            continue
+                    
+                    conn.commit()
+                    logger.info(f"✅ Сохранено {len(futures_kline_data)} записей для {symbol}")
                 
-                except Exception as e:
-                    logger.error(f"❌ Ошибка обработки символа {symbol}: {e}")
-                    continue
+                # Следующий период
+                current_ts = next_ts
+                
+                # Задержка для соблюдения rate limit
+                time.sleep(self.RATE_LIMIT_DELAY)
             
             conn.close()
             logger.info(f"🎉 Завершен сбор исторических basis данных: {total_records} записей")
@@ -353,10 +345,11 @@ class HistoricalBasisCollector:
             logger.error(f"❌ Ошибка сбора исторических basis данных: {e}")
             return False
     
-    def aggregate_basis_data(self, start_date: str, end_date: str):
+    def aggregate_basis_data(self, symbol: str, dataset_tag: str, start_date: str, end_date: str):
         """Агрегирует исторические basis данные в ежедневные метрики"""
         try:
             logger.info(f"📊 Агрегация basis данных за период {start_date} - {end_date}")
+            logger.info(f"🏷️  Тег набора данных: {dataset_tag}")
             
             conn = sqlite3.connect(self.db_path)
             
@@ -370,11 +363,11 @@ class HistoricalBasisCollector:
                 open_interest,
                 volume_24h
             FROM historical_basis_data 
-            WHERE time BETWEEN ? AND ?
+            WHERE time BETWEEN ? AND ? AND symbol = ? AND dataset_tag = ?
             ORDER BY time
             """
             
-            df = pd.read_sql_query(query, conn, params=[start_date, end_date])
+            df = pd.read_sql_query(query, conn, params=[start_date, end_date, symbol, dataset_tag])
             
             if df.empty:
                 logger.warning("⚠️ Нет исторических basis данных для агрегации")
@@ -407,10 +400,10 @@ class HistoricalBasisCollector:
                 
                 cursor.execute('''
                     INSERT OR REPLACE INTO basis_agg_historical 
-                    (time, timeframe, basis_rel, basis_abs, funding_rate, oi_total, volume_total)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (time, timeframe, symbol, dataset_tag, basis_rel, basis_abs, funding_rate, oi_total, volume_total)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
-                    time_str, '1d', row['basis_rel_mean'], row['basis_abs_mean'], 
+                    time_str, '1d', symbol, dataset_tag, row['basis_rel_mean'], row['basis_abs_mean'], 
                     row['funding_rate'], row['oi_total'], row['volume_total']
                 ))
             
@@ -425,34 +418,33 @@ class HistoricalBasisCollector:
             return False
 
 def main():
-    parser = argparse.ArgumentParser(description='Сбор исторических basis данных SOL фьючерсов')
+    parser = argparse.ArgumentParser(description='Сбор исторических basis данных фьючерсов')
+    parser.add_argument('--symbol', required=True,
+                       help='Символ фьючерса (например, BTCUSDT, SOLUSDT)')
+    parser.add_argument('--tag', required=True,
+                       help='Тег набора данных (например, training_2023, live_2025)')
     parser.add_argument('--start', required=True,
                        help='Дата начала в формате YYYY-MM-DD')
     parser.add_argument('--end', required=True,
                        help='Дата окончания в формате YYYY-MM-DD')
-    parser.add_argument('--max-symbols', type=int, default=20,
-                       help='Максимальное количество символов для сбора')
-    parser.add_argument('--db', default='data/sol_iv.db',
+    parser.add_argument('--db', default='server_opc.db',
                        help='Путь к базе данных')
     parser.add_argument('--aggregate-only', action='store_true',
                        help='Только агрегация существующих данных')
     
     args = parser.parse_args()
     
-    # Создаем папку data если её нет
-    os.makedirs('data', exist_ok=True)
-    
     # Инициализируем сборщик
     collector = HistoricalBasisCollector(args.db)
     
     if args.aggregate_only:
         # Только агрегация
-        success = collector.aggregate_basis_data(args.start, args.end)
+        success = collector.aggregate_basis_data(args.symbol, args.tag, args.start, args.end)
     else:
         # Полный сбор данных
-        success = collector.collect_historical_basis_data(args.start, args.end, args.max_symbols)
+        success = collector.collect_historical_basis_data(args.symbol, args.tag, args.start, args.end)
         if success:
-            success = collector.aggregate_basis_data(args.start, args.end)
+            success = collector.aggregate_basis_data(args.symbol, args.tag, args.start, args.end)
     
     if success:
         logger.info("✅ Сбор исторических basis данных завершен успешно")

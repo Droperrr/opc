@@ -6,6 +6,7 @@
 
 from config import DATABASE_PATH
 
+from tenacity import retry, stop_after_attempt, wait_fixed
 import requests
 import sqlite3
 import pandas as pd
@@ -104,7 +105,8 @@ class DataCollector:
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации БД: {e}")
     
-    def get_kline_data(self, market_type: str, symbol: str, interval: str, 
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+    def get_kline_data(self, market_type: str, symbol: str, interval: str,
                       start_time: str, end_time: str, limit: int = 1000) -> Optional[List]:
         """
         Получение данных свечей от Bybit API
@@ -149,7 +151,7 @@ class DataCollector:
         except Exception as e:
             logger.warning(f"⚠️ Не удалось сохранить прогресс: {e}")
     
-    def collect_data_for_timeframe(self, market_type: str, symbol: str, 
+    def collect_data_for_timeframe(self, market_type: str, symbol: str, dataset_tag: str,
                                   timeframe: str, start_date: str, end_date: str) -> bool:
         """
         Сбор данных для конкретного таймфрейма
@@ -206,9 +208,9 @@ class DataCollector:
                             time_str = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
                             
                             cursor.execute(f'''
-                                INSERT OR REPLACE INTO {table_name} 
-                                (time, timeframe, open, high, low, close, volume)
-                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                INSERT OR REPLACE INTO {table_name}
+                                (time, timeframe, open, high, low, close, volume, symbol, dataset_tag)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             ''', (
                                 time_str,
                                 self.SUPPORTED_TIMEFRAMES[timeframe],
@@ -216,7 +218,9 @@ class DataCollector:
                                 float(candle[2]),
                                 float(candle[3]),
                                 float(candle[4]),
-                                float(candle[5])
+                                float(candle[5]),
+                                symbol,
+                                dataset_tag
                             ))
                             
                             total_records += 1
@@ -247,7 +251,7 @@ class DataCollector:
             logger.error(f"❌ Ошибка сбора данных для {timeframe}: {e}")
             return False
     
-    def collect_all_timeframes(self, market_type: str, symbol: str, 
+    def collect_all_timeframes(self, market_type: str, symbol: str, dataset_tag: str,
                              timeframes: List[str], start_date: str, end_date: str):
         """
         Сбор данных для всех указанных таймфреймов
@@ -255,6 +259,7 @@ class DataCollector:
         logger.info(f"🚀 Начинаю сбор данных для {market_type} {symbol}")
         logger.info(f"📅 Период: {start_date} - {end_date}")
         logger.info(f"⏰ Таймфреймы: {timeframes}")
+        logger.info(f"🏷️  Тег набора данных: {dataset_tag}")
         
         results = {}
         
@@ -264,7 +269,7 @@ class DataCollector:
                 continue
             
             success = self.collect_data_for_timeframe(
-                market_type, symbol, timeframe, start_date, end_date
+                market_type, symbol, dataset_tag, timeframe, start_date, end_date
             )
             
             results[timeframe] = success
@@ -277,11 +282,15 @@ class DataCollector:
         return results
 
 def main():
-    parser = argparse.ArgumentParser(description='Сбор исторических данных SOL/USDT')
+    parser = argparse.ArgumentParser(description='Сбор исторических данных для различных активов')
     parser.add_argument('--market', choices=['spot', 'linear'], required=True,
                        help='Тип рынка: spot или linear (фьючерсы)')
     parser.add_argument('--pair', required=True,
                        help='Торговая пара (например, SOL/USDT или SOLUSDT)')
+    parser.add_argument('--symbol', required=True,
+                       help='Символ актива (например, BTCUSDT)')
+    parser.add_argument('--tag', required=True,
+                       help='Тег набора данных (например, training_2023, live_2025)')
     parser.add_argument('--tf', nargs='+', default=['1', '5', '15', '60', '240', '1440'],
                        help='Таймфреймы для сбора')
     parser.add_argument('--start', required=True,
@@ -304,7 +313,7 @@ def main():
     
     # Запускаем сбор
     results = collector.collect_all_timeframes(
-        args.market, symbol, args.tf, args.start, args.end
+        args.market, symbol, args.tag, args.tf, args.start, args.end
     )
     
     # Выводим результаты
